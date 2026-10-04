@@ -1,0 +1,25 @@
+# FOC-Study
+
+基于逐飞 TC264D 开源库与 Infineon AURIX iLLD 的 DRV8313 / SimpleFOC Mini 开环无刷电机驱动实验工程。
+
+当前版本实现：
+
+- CCU61 三路同步、中心对齐 20 kHz PWM；
+- 电压开环三相正弦调制，不假定电机极对数；
+- 低幅定位以及电频率、调制系数斜坡；
+- EN 优先关断、nFAULT 中断和故障锁存；
+- `START`、`STOP`、`FREQ`、`AMP`、`STATUS`、`CLEAR_FAULT` 串口命令；
+- AURIX Studio / TASKING 命令行构建脚本和主机侧控制流程测试。
+
+详细的接线、参数、编译方法和拆桨测试流程见 [README_DRV8313_TC264.md](README_DRV8313_TC264.md)。
+
+## 编译
+
+```powershell
+.\build.ps1 -Clean
+python .\tests\run_host_tests.py
+```
+
+已提交的 `build/FOC_TC264.hex`、`.elf` 和 `.map` 来自 AURIX Studio 1.10.10 / TASKING 1.1r8，目标工程编译结果为 0 errors、0 warnings。
+
+> 当前只完成编译和软件流程验证，尚未连接实物验证 PWM 波形、故障响应时间或电机实际转动。首次测试必须拆桨并使用限流电源。

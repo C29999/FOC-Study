@@ -1,0 +1,10 @@
+Host C compiler: D:\code\FOC\tmp\host_toolchain\ziglang\zig.exe
+PASS startup delays, low alignment, bounded slew, sine duties and angle wrap
+PASS STOP lowers EN before stopping PWM, including all startup wait states
+PASS ISR and sampled fault shutdown, latch, explicit reset/wake clear and no restart
+PASS active nFAULT and failed PWM/EN startup stay disabled
+PASS fault preempting unlocked PWM math cannot restore output or write duties
+PASS NaN/infinity/range validation, zero amplitude startup rejection and hard limits
+PASS serial command parsing, malformed numeric/trailing input and reply bounds
+PASS fragmented RX, CRLF/backspace, NUL, line/ring overflow and UART error recovery
+ALL HOST C TESTS PASSED (1504705 checks). Hardware timing/motor motion unverified.

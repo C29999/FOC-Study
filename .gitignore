@@ -1,0 +1,26 @@
+# AURIX Development Studio generated output
+Debug/
+Release/
+*.o
+*.d
+*.src
+*.siz
+
+# Reproducible headless-build staging and verbose logs
+build/*
+!build/FOC_TC264.elf
+!build/FOC_TC264.hex
+!build/FOC_TC264.map
+!build/build.log
+!build/host-tests.log
+
+# Local tools and editor files
+.metadata/
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+*.user
+*.suo
+Thumbs.db
+.DS_Store
