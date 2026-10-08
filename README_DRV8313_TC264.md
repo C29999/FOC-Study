@@ -25,19 +25,21 @@ CPU0 独占控制；CPU1 沿用原工程空闲循环。原有 `motor_init()`、�
 
 已核对用户提供的 `C:/Users/10503/Downloads/Schematic_simplefocmini.pdf`（Mini REV 1.0，2022-02-26）。板上三相 EN 共用，nRESET/nSLEEP/nFAULT 各有 10kΩ 上拉到 DRV 内部 3.3V，R4 是 H1-9 到三相 EN 的 **10kΩ 串联电阻**。板上没有电流采样，也没有 nFAULT 直接关闭 EN 的逻辑门。工作区另一份 STM32 HTML 原理图有额外采样/门电路，不能当作这块原版 Mini 的实物接线依据。
 
-以下是本次固件的确定映射。没有连接实物，因此需要按表接线并核对所用 TC264 核心板确实引出这些引脚；STM32 的 PA/PB 不适用于 TC264。
+以下映射已按 TC264 V3.1 通用主板原理图核对，信号均可从主板现有插座引出。插座原来标注的摄像头、无刷电机、ToF 和姿态模块在本固件中停用，不要同时连接。STM32 的 PA/PB 引脚名称不适用于 TC264。
 
-| TC264 引脚 | Mini 接口 | 信号 |
-| --- | --- | --- |
-| P00.1 / CCU61 CC60，ALT7 | H1-3 | IN1 / PWM A |
-| P00.3 / CCU61 CC61，ALT7 | H1-5 | IN2 / PWM B |
-| P00.5 / CCU61 CC62，ALT7 | H1-7 | IN3 / PWM C |
-| P33.6 | H1-8 | nSLEEP |
-| P33.7 | H1-6 | nRESET |
-| P33.5 | H1-9 | 三相共用 EN |
-| P15.4 / ERU0 REQ0 | H1-10 | nFAULT，必须连接 |
-| 主控 GND | H1-1 或 H1-4 | 共地 |
-| 不接主控供电 | H1-2 | DRV 内部 3.3V 输出 |
+| 功能 | TC264 引脚 | TC264 V3.1 主板插座 | SimpleFOC Mini |
+| --- | --- | --- | --- |
+| PWM A | P00.1 / CCU61 CC60，ALT7 | P3-3 | H1-3 / IN1 |
+| PWM B | P00.3 / CCU61 CC61，ALT7 | P3-7 | H1-5 / IN2 |
+| PWM C | P00.5 / CCU61 CC62，ALT7 | P3-11 | H1-7 / IN3 |
+| nSLEEP | P33.6 | P18-2（主板串联 100Ω） | H1-8 |
+| nRESET | P33.7 | P18-6（主板串联 100Ω） | H1-6 |
+| 三相共用 EN | P33.5 | P20-4 | H1-9 |
+| nFAULT | P15.4 / ERU0 REQ0 | P4-8 | H1-10，必须连接 |
+| 共地 | GND | P18-3 或 P18-4（也可用其他 GND） | H1-1 或 H1-4 |
+| 禁止连接 | — | — | H1-2：DRV 内部 3.3V 输出，不给主板供电 |
+
+主板电源从 P1 XT60 输入 7.2～24V。首次测试建议用 9V 限流台式电源接 P1，并从主板 DCOUT1/2 的 VCCBAT/GND 给 SimpleFOC Mini 的 VM/GND 供电，使两板天然共地。Mini 的 VM 推荐不低于 8V，不能用主板 VCC5V 给 VM 供电。若主控和驱动分开供电，仍必须连接两者 GND。
 
 相对旧 FOC 配置，EN 保留 P33.5；三相 PWM 从 P22.0/.2/.1 移到 P00.1/.3/.5；nFAULT 从 P21.0 移到 P15.4；增加 nSLEEP/nRESET。旧线不能直接沿用。
 
@@ -94,7 +96,7 @@ STOP 首先 EN=0，随后关闭 CCU61 PWM 调制/计数器，并拉低 nRESET/nS
 
 运行中 FREQ/AMP 的变化也采用相同斜率。AMP=0 表示幅值逐渐降到零，不替代高阻 STOP。无负载/低频时仍可能有较大相电流，默认参数是初始调试值，不是某台 1104 电机的实测保证。
 
-沿用逐飞默认 UART0（ASCLIN0），TX=P14.0、RX=P14.1，115200、8N1；终端发送 CR、LF 或 CRLF。USB 转串口 TX 接主控 RX，RX 接主控 TX，共地，按核心板 I/O 电平选适配器。此处不涉及 STM32 USART1 重映射。
+调试命令使用 UART3（ASCLIN3），115200、8N1，并使用 V3.1 主板 P9 已引出的第一组串口：P9-7=P15.6/TX 接 USB 转串口 RX，P9-5=P15.7/RX 接 USB 转串口 TX，P9-3=GND 接 USB 转串口 GND。P9-1 是主板 VCC5V，不接 USB-TTL 的信号电源脚；适配器信号电平应为 3.3V。终端可发送 CR、LF 或 CRLF。P14.0/P14.1 未从该主板外设插座引出，因此不再使用原 UART0 配置。
 
 ```text
 STATUS

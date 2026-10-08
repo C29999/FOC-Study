@@ -171,12 +171,6 @@ IFX_INTERRUPT(uart0_rx_isr, 0, UART0_RX_INT_PRIO)
 {
     interrupt_global_enable(0);                     // �����ж�Ƕ��
 
-    uint8 byte;
-    unsigned int count;
-    for (count = 0u; count < 16u; ++count) {
-        if (!uart_query_byte(DEBUG_UART_INDEX, &byte)) break;
-        foc_console_rx_byte_isr(byte);
-    }
 }
 
 
@@ -224,7 +218,12 @@ IFX_INTERRUPT(uart3_tx_isr, 0, UART3_TX_INT_PRIO)
 IFX_INTERRUPT(uart3_rx_isr, 0, UART3_RX_INT_PRIO)
 {
     interrupt_global_enable(0);                     // �����ж�Ƕ��
-    gnss_uart_callback();                           // GNSS���ڻص�����
+    uint8 byte;
+    unsigned int count;
+    for (count = 0u; count < 16u; ++count) {
+        if (!uart_query_byte(DEBUG_UART_INDEX, &byte)) break;
+        foc_console_rx_byte_isr(byte);
+    }
 
 
 
@@ -234,7 +233,6 @@ IFX_INTERRUPT(uart3_rx_isr, 0, UART3_RX_INT_PRIO)
 IFX_INTERRUPT(uart0_er_isr, 0, UART0_ER_INT_PRIO)
 {
     interrupt_global_enable(0);                     // �����ж�Ƕ��
-    foc_console_rx_error_isr();
     IfxAsclin_Asc_isrError(&uart0_handle);
 }
 IFX_INTERRUPT(uart1_er_isr, 0, UART1_ER_INT_PRIO)
@@ -250,5 +248,6 @@ IFX_INTERRUPT(uart2_er_isr, 0, UART2_ER_INT_PRIO)
 IFX_INTERRUPT(uart3_er_isr, 0, UART3_ER_INT_PRIO)
 {
     interrupt_global_enable(0);                     // �����ж�Ƕ��
+    foc_console_rx_error_isr();
     IfxAsclin_Asc_isrError(&uart3_handle);
 }

@@ -133,7 +133,7 @@ static char response[320];
 void foc_console_init(void)
 {
     foc_console_reset_input();
-    /* Existing debug_init configures UART0 P14.0/P14.1, 115200 8N1.
+    /* debug_init configures UART3 P15.6/P15.7 on mainboard P9, 115200 8N1.
      * isr.c uses our RX ring so lost bytes cause whole-line rejection.
      */
     uart_write_string(DEBUG_UART_INDEX, "TC264 DRV8313 OPEN LOOP; EN=0; no auto-start. HELP\r\n");
