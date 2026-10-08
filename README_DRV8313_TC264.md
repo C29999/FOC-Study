@@ -12,14 +12,14 @@
 | --- | --- |
 | `code/foc.c`, `code/foc.h` | 正弦调制、复位/唤醒/定位/斜坡、停止、故障锁存和显式清故障 |
 | `user/foc_config.h` | 所有启动参数、限幅和 TC264 引脚映射 |
-| `user/foc_port.c`, `user/foc_port.h` | GTM ATOM0 同步中心脉冲对齐 3PWM、GPIO、ERU 故障和临界区 |
+| `user/foc_port.c`, `user/foc_port.h` | GTM ATOM0 同步中心脉冲对齐 3PWM、GPIO、GTM TIM 故障和临界区 |
 | `user/foc_console.c`, `user/foc_console.h` | 串口命令、有限长度解析、接收错误/溢出整行丢弃 |
 | `user/cpu0_main.c` | 先将 EN 设为低，随后初始化；主循环处理串口，无自动启动 |
 | `user/isr.c`, `user/isr_config.h` | 100 μs 控制定时中断、优先级 255 故障 ISR、串口 RX/错误 ISR |
 | `.cproject`, `build.ps1` | 排除主机测试/构建目录、官方 ADS 完整构建和固件导出 |
 | `tests/foc_host_test.c`, `tests/run_host_tests.py`, `foc_sim_check.py` | 编译执行实际控制/串口 C 代码，模拟硬件接口验证软件行为 |
 
-CPU0 独占控制；CPU1 沿用原工程空闲循环。原有 `motor_init()`、摄像头、编码器、IMU/TFT/ToF/CCD 初始化不在本程序中调用。P02.4/.5/.6 原用于有刷电机接口 2，其中 P02.4/.5 还复用到无刷接口；P33.6/.7 原推荐给编码器；P33.6/.7 还被旧 motor PWM/方向使用；P15.4 被 IMU660RC/TFT 使用；P33.5 被 ToF I2C 使用。**这些功能和对应外设连接不能同时占用本次引脚。**项目列出的 boot 引脚没有用于本次驱动。
+CPU0 独占控制；CPU1 沿用原工程空闲循环。原有 `motor_init()`、摄像头、编码器、IMU/TFT/ToF/CCD 初始化不在本程序中调用。P02.4/.5/.6 原用于有刷电机接口 2，其中 P02.4/.5 还复用到无刷接口；P22.1、P22.3、P15.8、P23.1 集中引出到 P12 无线模块 SPI 接口。**有刷接口 2、P12 无线模块及其复用功能不能同时占用本次引脚。**项目列出的 boot 引脚没有用于本次驱动。
 
 ## 接线
 
@@ -32,18 +32,18 @@ CPU0 独占控制；CPU1 沿用原工程空闲循环。原有 `motor_init()`、�
 | PWM A | P02.4 / GTM ATOM0 CH4，ALT1 | P7-2（经 100Ω） | H1-3 / IN1 |
 | PWM B | P02.5 / GTM ATOM0 CH5，ALT1 | P7-6（经 100Ω） | H1-5 / IN2 |
 | PWM C | P02.6 / GTM ATOM0 CH6，ALT1 | P7-1（经 100Ω） | H1-7 / IN3 |
-| nSLEEP | P33.6 | P18-2（主板串联 100Ω） | H1-8 |
-| nRESET | P33.7 | P18-6（主板串联 100Ω） | H1-6 |
-| 三相共用 EN | P33.5 | P20-4 | H1-9 |
-| nFAULT | P15.4 / ERU0 REQ0 | P4-8 | H1-10，必须连接 |
-| 共地 | GND | P18-3 或 P18-4（也可用其他 GND） | H1-1 或 H1-4 |
+| nSLEEP | P23.1 | P12-8 | H1-8 |
+| nRESET | P15.8 | P12-4 | H1-6 |
+| 三相共用 EN | P22.1 | P12-1 | H1-9 |
+| nFAULT | P22.3 / GTM TIM0 CH4 / TIN50 | P12-3 | H1-10，必须连接 |
+| 共地 | GND | P12-6 或 P12-7（也可用其他 GND） | H1-1 或 H1-4 |
 | 禁止连接 | — | — | H1-2：DRV 内部 3.3V 输出，不给主板供电 |
 
 主板电源从 P1 XT60 输入 7.2～24V。首次测试建议用 9V 限流台式电源接 P1，并从主板 DCOUT1/2 的 VCCBAT/GND 给 SimpleFOC Mini 的 VM/GND 供电，使两板天然共地。Mini 的 VM 推荐不低于 8V，不能用主板 VCC5V 给 VM 供电。若主控和驱动分开供电，仍必须连接两者 GND。
 
-三相 PWM 现统一从有刷电机接口 2 的 P7 引出。P7-4、P7-3 是 GND，P7-5/P02.7 本程序不使用。P02.4 和 P02.5 同时也出现在 P18-1、P18-5，必须保持这两个 P18 针脚悬空；P18 仅连接本表指定的 nSLEEP、nRESET 和 GND。旧 PWM 线不能继续接 P3。
+三相 PWM 现统一从有刷电机接口 2 的 P7 引出。P7-4、P7-3 是 GND，P7-5/P02.7 本程序不使用。P02.4 和 P02.5 同时也出现在 P18-1、P18-5，必须保持这两个 P18 针脚悬空。四路控制信号全部从 P12 引出；P12-9 是主板 5V，不能接 Mini 的控制端或 H1-2。旧 PWM 线不能继续接 P3。
 
-TC264 核心板使用其规定的独立稳压电源，与 Mini 共地；不要将 STM32 裸芯片的“接 3.3V”要求机械套用到整块 TC264 核心板。H1-2 不给主控供电。P15.4 是 MP/VEXT 输入，本固件将它设为无 MCU 内部上拉的 TTL 滞回输入，使用 Mini 原有的 3.3V 上拉。按 TC26x 数据手册 TTL 滞回输入公式，在 VEXT 不高于 5.5V 时保证 VIH 最大为 2.03V，因此 3.3V 高电平满足规格；不要擅自把 nFAULT 上拉到另一电源导致反向供电。仍应按实际核心板 I/O 电源核对 PWM、EN、RESET、SLEEP 输出电平。
+TC264 核心板使用其规定的独立稳压电源，与 Mini 共地；不要将 STM32 裸芯片的“接 3.3V”要求机械套用到整块 TC264 核心板。H1-2 不给主控供电。P22.3 配置为无 MCU 内部上拉的输入，使用 Mini 原有的 3.3V nFAULT 上拉；不要擅自把 nFAULT 上拉到另一电源导致反向供电。仍应按实际核心板 I/O 电源核对 PWM、EN、RESET、SLEEP 输出电平。
 
 DRV8313 数据手册说明 ENx 内部有下拉，原图没有单独的外部 EN 下拉。固件会先写低输出锁存器再设 GPIO 输出，但**不能保证 MCU 复位、未供电或尚未进入 main 时 EN 一定为低**。应在断开电机时测量 EN 的启动/复位波形，按实物需要增加下拉或门电路。增加电阻时要考虑 R4 串联 10kΩ、三个 EN 输入的并联负载和 DRV 的 VIH，避免简单增加 10kΩ 下拉形成分压后无法使能。
 
@@ -67,12 +67,12 @@ C = 0.5 + 0.5*m*sin(theta_e + 2*pi/3)
 1. EN=0，复位/睡眠保持 2 ms。
 2. 释放 nRESET、nSLEEP，等待 5 ms（TI 数据手册唤醒约 1 ms，此处留余量）。
 3. 确认 nFAULT 高，启动 PWM 并写入低幅固定角度，占空比同步更新；EN 仍为低。
-4. 再等待 1 ms 确保 PWM/影子值稳定；复核 nFAULT 电平及 ERU 挂起事件，才使 EN=1。
+4. 再等待 1 ms 确保 PWM/影子值稳定；复核 nFAULT 电平及 GTM TIM 挂起事件，才使 EN=1。
 5. 固定电角度、低幅定位 200 ms，然后同时缓慢增加电频率和幅值。
 
 STOP 首先 EN=0，随后同步关闭 ATOM0 三路 PWM 输出和共用计数器，并拉低 nRESET/nSLEEP。仅清零占空比不能代表高阻：EN=1、IN=0 会使 DRV 下管导通。
 
-本芯片没有 STM32 TIM1/BKIN。本版把低有效 nFAULT 接到 ERU0 的下降沿中断，优先级 255；ISR 第一项清 EN，然后锁存故障、关闭 PWM。运行期间控制中断还检查 nFAULT 电平。**本版没有使用 CCU6 CTRAP 硬件关 PWM，也没有 nFAULT 硬件门直接清 EN；关断依赖固件响应，延迟需要实测。**短临界区保护启停/三相提交，三角函数计算允许故障中断抢占。
+本芯片没有 STM32 TIM1/BKIN。P22.3 不具备 ERU 输入映射，因此本版用 GTM TIM0 CH4 的 TIEM 下降沿事件接收低有效 nFAULT，中断优先级 255；ISR 第一项清 EN，然后锁存故障、关闭 PWM。运行期间 100 µs 控制中断还检查 nFAULT 电平。**本版没有使用 CCU6 CTRAP 硬件关 PWM，也没有 nFAULT 硬件门直接清 EN；关断依赖固件响应，延迟需要实测。**短临界区保护启停/三相提交，三角函数计算允许故障中断抢占。
 
 复位/睡眠/唤醒等待期间 EN 始终低，预期的 nFAULT 变化不当作运行故障；唤醒结束仍低则锁存 FAULT。故障信号恢复高不会自动恢复，STOP 不清除锁存。CLEAR_FAULT 在 EN=0 时重新执行复位/唤醒并复核 nFAULT，成功后只回 STOPPED，必须再发 START。
 

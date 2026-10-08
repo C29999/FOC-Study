@@ -23,7 +23,7 @@ bool foc_init(void);
 bool foc_start(void);
 void foc_stop(void);
 void foc_tick_isr(void);
-/* ERU: call before clearing event or enabling interrupt nesting. */
+/* Fault IRQ: call before clearing event or enabling interrupt nesting. */
 void foc_fault_isr(void);
 /* Asynchronous reset/wake, keeps EN low; requires subsequent START. */
 bool foc_clear_fault(void);

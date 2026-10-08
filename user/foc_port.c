@@ -5,17 +5,20 @@
  */
 #include "foc_port.h"
 #include "foc_config.h"
+#include "isr_config.h"
 #include "Gtm/Atom/Timer/IfxGtm_Atom_Timer.h"
 #include "Gtm/Std/IfxGtm_Cmu.h"
 #include "Gtm/Std/IfxGtm.h"
+#include "Gtm/Std/IfxGtm_Tim.h"
+#include "_PinMap/IfxGtm_PinMap.h"
 #include "IfxCpu.h"
 #include "zf_driver_gpio.h"
-#include "zf_driver_exti.h"
 
 static volatile bool port_ready;
 static volatile bool pwm_running;
 static volatile bool driver_awake;
 static IfxGtm_Atom_Timer pwm_timer;
+static Ifx_GTM_TIM_CH *fault_tim_channel;
 static uint32 period_ticks;
 static float pwm_frequency_hz;
 
@@ -26,6 +29,39 @@ static float pwm_frequency_hz;
 #define FOC_ATOM_PWM_C_CHANNEL     IfxGtm_Atom_Ch_6
 #define FOC_ATOM_PWM_MASK          ((uint16)((1u << 4) | (1u << 5) | (1u << 6)))
 #define FOC_ATOM_ALL_MASK          ((uint16)((1u << 3) | FOC_ATOM_PWM_MASK))
+#define FOC_NFAULT_TIM             IfxGtm_Tim_0
+#define FOC_NFAULT_TIM_CHANNEL     IfxGtm_Tim_Ch_4
+
+static void init_nfault_interrupt(void)
+{
+    volatile Ifx_SRC_SRCR *src;
+    Ifx_GTM_TIM *tim = &MODULE_GTM.TIM[FOC_NFAULT_TIM];
+
+    IfxGtm_Tim_Ch_resetChannel(tim, FOC_NFAULT_TIM_CHANNEL);
+    fault_tim_channel = IfxGtm_Tim_getChannel(tim, FOC_NFAULT_TIM_CHANNEL);
+    IfxGtm_PinMap_setTimTin(FOC_NFAULT_TIM_INPUT, IfxPort_InputMode_noPullDevice);
+    IfxPort_setPinPadDriver(get_port(FOC_NFAULT_PIN),
+        (uint8)((unsigned int)FOC_NFAULT_PIN & 31u), IfxPort_PadDriver_ttlSpeed2);
+
+    /* MODE=0/VAL=1 selects the channel's external TIN input. TIEM with
+     * DSL=0 and ISL=0 reports falling/low input events, matching active-low
+     * nFAULT. The Mini supplies the external 3.3 V pull-up.
+     */
+    tim->IN_SRC.B.MODE_4 = 0u;
+    tim->IN_SRC.B.VAL_4 = 1u;
+    fault_tim_channel->CTRL.B.CICTRL = IfxGtm_Tim_Input_currentChannel;
+    fault_tim_channel->CTRL.B.TIM_MODE = IfxGtm_Tim_Mode_inputEvent;
+    fault_tim_channel->CTRL.B.DSL = 0u;
+    fault_tim_channel->CTRL.B.ISL = 0u;
+    IfxGtm_Tim_Ch_setNotificationMode(fault_tim_channel, IfxGtm_IrqMode_pulseNotify);
+    IfxGtm_Tim_Ch_setChannelNotification(fault_tim_channel, TRUE, FALSE, FALSE, FALSE);
+    IfxGtm_Tim_Ch_clearNewValueEvent(fault_tim_channel);
+    src = IfxGtm_Tim_Ch_getSrcPointer(&MODULE_GTM,
+        FOC_NFAULT_TIM, FOC_NFAULT_TIM_CHANNEL);
+    IfxSrc_init(src, IfxSrc_Tos_cpu0, FOC_NFAULT_TIM_ISR_PRIORITY);
+    IfxSrc_enable(src);
+    fault_tim_channel->CTRL.B.TIM_EN = 1u;
+}
 
 /* Preload the low output latch before switching an input to output mode.
  * This controls the pin only after firmware runs; it does not establish an
@@ -52,6 +88,14 @@ bool foc_port_fault_active(void)
 {
     return IfxPort_getPinState(get_port(FOC_NFAULT_PIN),
         (uint8)((unsigned int)FOC_NFAULT_PIN & 31u)) == FALSE;
+}
+
+void foc_port_fault_irq_ack(void)
+{
+    if (fault_tim_channel != NULL_PTR)
+    {
+        IfxGtm_Tim_Ch_clearNewValueEvent(fault_tim_channel);
+    }
 }
 
 unsigned int foc_port_enter_critical(void)
@@ -82,22 +126,6 @@ bool foc_port_init(void)
     driver_awake = false;
     pwm_frequency_hz = 0.0f;
 
-    /* nFAULT is open drain. The Mini already has its 3.3 V pull-up.
-     * P15.4 is an MP/VEXT input. Select TTL with hysteresis: in the TC26x
-     * data sheet this guarantees VIH <= 2.03 V for VEXT <= 5.5 V, so the
-     * Mini's 3.3 V high is valid even when the TC264 I/O domain is 5 V.
-     * Disable the MCU pull device and use only the Mini's external pull-up.
-     * TC26x UM 14.3.2/Table 14-6: PLx=1 selects TTL, PDx=1 hysteresis.
-     * Seekfree ERU0 falling-edge interrupt uses EXTI_CH0_CH4_INT_PRIO = 255
-     * in isr_config.h. Its ISR must pull EN low before clearing the flag.
-     */
-    exti_flag_clear(FOC_NFAULT_EXTI);
-    exti_init(FOC_NFAULT_EXTI, EXTI_TRIGGER_FALLING);
-    IfxPort_setPinMode(get_port(FOC_NFAULT_PIN),
-        (uint8)((unsigned int)FOC_NFAULT_PIN & 31u), IfxPort_Mode_inputNoPullDevice);
-    IfxPort_setPinPadDriver(get_port(FOC_NFAULT_PIN),
-        (uint8)((unsigned int)FOC_NFAULT_PIN & 31u), IfxPort_PadDriver_ttlSpeed2);
-
     IfxGtm_enable(&MODULE_GTM);
     if ((MODULE_GTM.CMU.CLK_EN.U & 0x2u) == 0u)
     {
@@ -105,6 +133,7 @@ bool foc_port_init(void)
             FOC_ATOM_CLOCK_HZ);
         IfxGtm_Cmu_enableClocks(&MODULE_GTM, IFXGTM_CMU_CLKEN_CLK0);
     }
+    init_nfault_interrupt();
 
     IfxGtm_Atom_Timer_initConfig(&timer_config, &MODULE_GTM);
     timer_config.atom = IfxGtm_Atom_0;
@@ -229,16 +258,18 @@ bool foc_port_enable_driver(void)
 {
     bool success = false;
     unsigned int state = foc_port_enter_critical();
-    /* An ERU flag also catches a brief low pulse that has already recovered.
+    /* A TIM event also catches a brief low pulse that has already recovered.
      * Do not clear that event here; the fault ISR/control latch owns it.
      * The short critical section prevents returning from a preempting fault
      * ISR and then inadvertently executing an old EN-high instruction.
      */
     if (port_ready && driver_awake && pwm_running &&
-        !foc_port_fault_active() && !exti_flag_get(FOC_NFAULT_EXTI))
+        !foc_port_fault_active() &&
+        !IfxGtm_Tim_Ch_isNewValueEvent(fault_tim_channel))
     {
         IfxPort_setPinHigh(get_port(FOC_EN_PIN), (uint8)((unsigned int)FOC_EN_PIN & 31u));
-        success = !foc_port_fault_active();
+        success = !foc_port_fault_active() &&
+            !IfxGtm_Tim_Ch_isNewValueEvent(fault_tim_channel);
         if (!success)
         {
             foc_port_disable_driver_immediate();

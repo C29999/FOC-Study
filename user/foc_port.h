@@ -6,8 +6,9 @@
 /* CPU0 owns this port. No motor operation is issued by CPU1. */
 bool foc_port_init(void);
 void foc_port_start_pwm(void);      /* EN remains low. Wait PWM_SETTLE_MS. */
-bool foc_port_enable_driver(void);  /* Checks live nFAULT and pending ERU. */
+bool foc_port_enable_driver(void);  /* Checks live nFAULT and pending TIM event. */
 void foc_port_disable_driver_immediate(void); /* First action of fault ISR. */
+void foc_port_fault_irq_ack(void);  /* Acknowledge GTM TIM0 CH4 event. */
 void foc_port_disable(void);        /* EN low, then PWM modulation/timer off. */
 bool foc_port_fault_active(void);
 void foc_port_set_awake(bool awake); /* Both nRESET and nSLEEP; EN held low. */

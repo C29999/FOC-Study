@@ -36,6 +36,7 @@
 #include "isr_config.h"
 #include "isr.h"
 #include "foc.h"
+#include "foc_port.h"
 #include "foc_console.h"
 
 // ����TCϵ��Ĭ���ǲ�֧���ж�Ƕ�׵ģ�ϣ��֧���ж�Ƕ����Ҫ���ж���ʹ�� interrupt_global_enable(0); �������ж�Ƕ��
@@ -86,14 +87,22 @@ IFX_INTERRUPT(cc61_pit_ch1_isr, 0, CCU6_1_CH1_ISR_PRIORITY)
 // **************************** �ⲿ�жϺ��� ****************************
 IFX_INTERRUPT(exti_ch0_ch4_isr, 0, EXTI_CH0_CH4_INT_PRIO)
 {
-    /* First action clears EN. This ISR has priority 255; do not enable nesting.
-     * ERU0 is reserved for DRV8313 nFAULT, not the old IMU callback.
-     */
-    foc_fault_isr();
-    exti_flag_clear(ERU_CH0_REQ0_P15_4);
+    interrupt_global_enable(0);
+    if (exti_flag_get(ERU_CH0_REQ0_P15_4)) {
+        exti_flag_clear(ERU_CH0_REQ0_P15_4);
+    }
     if (exti_flag_get(ERU_CH4_REQ13_P15_5)) {
         exti_flag_clear(ERU_CH4_REQ13_P15_5);
     }
+}
+
+IFX_INTERRUPT(foc_nfault_tim0_ch4_isr, 0, FOC_NFAULT_TIM_ISR_PRIORITY)
+{
+    /* Keep this as the first operation. P22.3 uses GTM TIM0 CH4 because it
+     * has no ERU input mapping. TIEM is configured for falling/low events.
+     */
+    foc_fault_isr();
+    foc_port_fault_irq_ack();
 }
 
 IFX_INTERRUPT(exti_ch1_ch5_isr, 0, EXTI_CH1_CH5_INT_PRIO)

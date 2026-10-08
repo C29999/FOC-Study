@@ -32,10 +32,10 @@
 #define FOC_PWM_A_OUTPUT            (&IfxGtm_ATOM0_4_TOUT4_P02_4_OUT)
 #define FOC_PWM_B_OUTPUT            (&IfxGtm_ATOM0_5_TOUT5_P02_5_OUT)
 #define FOC_PWM_C_OUTPUT            (&IfxGtm_ATOM0_6_TOUT6_P02_6_OUT)
-#define FOC_EN_PIN                  P33_5
-#define FOC_NSLEEP_PIN              P33_6
-#define FOC_NRESET_PIN              P33_7
-#define FOC_NFAULT_PIN              P15_4
-#define FOC_NFAULT_EXTI             ERU_CH0_REQ0_P15_4
+#define FOC_EN_PIN                  P22_1
+#define FOC_NSLEEP_PIN              P23_1
+#define FOC_NRESET_PIN              P15_8
+#define FOC_NFAULT_PIN              P22_3
+#define FOC_NFAULT_TIM_INPUT        (&IfxGtm_TIM0_4_TIN50_P22_3_IN)
 
 #endif
