@@ -12,26 +12,26 @@
 | --- | --- |
 | `code/foc.c`, `code/foc.h` | 正弦调制、复位/唤醒/定位/斜坡、停止、故障锁存和显式清故障 |
 | `user/foc_config.h` | 所有启动参数、限幅和 TC264 引脚映射 |
-| `user/foc_port.c`, `user/foc_port.h` | CCU61 同步中心对齐 3PWM、GPIO、ERU 故障和临界区 |
+| `user/foc_port.c`, `user/foc_port.h` | GTM ATOM0 同步中心脉冲对齐 3PWM、GPIO、ERU 故障和临界区 |
 | `user/foc_console.c`, `user/foc_console.h` | 串口命令、有限长度解析、接收错误/溢出整行丢弃 |
 | `user/cpu0_main.c` | 先将 EN 设为低，随后初始化；主循环处理串口，无自动启动 |
 | `user/isr.c`, `user/isr_config.h` | 100 μs 控制定时中断、优先级 255 故障 ISR、串口 RX/错误 ISR |
 | `.cproject`, `build.ps1` | 排除主机测试/构建目录、官方 ADS 完整构建和固件导出 |
 | `tests/foc_host_test.c`, `tests/run_host_tests.py`, `foc_sim_check.py` | 编译执行实际控制/串口 C 代码，模拟硬件接口验证软件行为 |
 
-CPU0 独占控制；CPU1 沿用原工程空闲循环。原有 `motor_init()`、摄像头、编码器、IMU/TFT/ToF/CCD 初始化不在本程序中调用。P00.1/.3/.5 原推荐给摄像头数据；P33.6/.7 原推荐给编码器；P33.6/.7 还被旧 motor PWM/方向使用；P15.4 被 IMU660RC/TFT 使用；P33.5 被 ToF I2C 使用。**这些功能和对应外设连接不能同时占用本次引脚。**项目列出的 boot 引脚没有用于本次驱动。
+CPU0 独占控制；CPU1 沿用原工程空闲循环。原有 `motor_init()`、摄像头、编码器、IMU/TFT/ToF/CCD 初始化不在本程序中调用。P02.4/.5/.6 原用于有刷电机接口 2，其中 P02.4/.5 还复用到无刷接口；P33.6/.7 原推荐给编码器；P33.6/.7 还被旧 motor PWM/方向使用；P15.4 被 IMU660RC/TFT 使用；P33.5 被 ToF I2C 使用。**这些功能和对应外设连接不能同时占用本次引脚。**项目列出的 boot 引脚没有用于本次驱动。
 
 ## 接线
 
 已核对用户提供的 `C:/Users/10503/Downloads/Schematic_simplefocmini.pdf`（Mini REV 1.0，2022-02-26）。板上三相 EN 共用，nRESET/nSLEEP/nFAULT 各有 10kΩ 上拉到 DRV 内部 3.3V，R4 是 H1-9 到三相 EN 的 **10kΩ 串联电阻**。板上没有电流采样，也没有 nFAULT 直接关闭 EN 的逻辑门。工作区另一份 STM32 HTML 原理图有额外采样/门电路，不能当作这块原版 Mini 的实物接线依据。
 
-以下映射已按 TC264 V3.1 通用主板原理图核对，信号均可从主板现有插座引出。插座原来标注的摄像头、无刷电机、ToF 和姿态模块在本固件中停用，不要同时连接。STM32 的 PA/PB 引脚名称不适用于 TC264。
+以下映射已按 TC264 V3.1 通用主板原理图核对，三路 PWM 集中使用“有刷电机接口 2”（P7）。插座原来标注的有刷电机、无刷电机、ToF 和姿态模块在本固件中停用，不要同时连接。STM32 的 PA/PB 引脚名称不适用于 TC264。
 
 | 功能 | TC264 引脚 | TC264 V3.1 主板插座 | SimpleFOC Mini |
 | --- | --- | --- | --- |
-| PWM A | P00.1 / CCU61 CC60，ALT7 | P3-3 | H1-3 / IN1 |
-| PWM B | P00.3 / CCU61 CC61，ALT7 | P3-7 | H1-5 / IN2 |
-| PWM C | P00.5 / CCU61 CC62，ALT7 | P3-11 | H1-7 / IN3 |
+| PWM A | P02.4 / GTM ATOM0 CH4，ALT1 | P7-2（经 100Ω） | H1-3 / IN1 |
+| PWM B | P02.5 / GTM ATOM0 CH5，ALT1 | P7-6（经 100Ω） | H1-5 / IN2 |
+| PWM C | P02.6 / GTM ATOM0 CH6，ALT1 | P7-1（经 100Ω） | H1-7 / IN3 |
 | nSLEEP | P33.6 | P18-2（主板串联 100Ω） | H1-8 |
 | nRESET | P33.7 | P18-6（主板串联 100Ω） | H1-6 |
 | 三相共用 EN | P33.5 | P20-4 | H1-9 |
@@ -41,7 +41,7 @@ CPU0 独占控制；CPU1 沿用原工程空闲循环。原有 `motor_init()`、�
 
 主板电源从 P1 XT60 输入 7.2～24V。首次测试建议用 9V 限流台式电源接 P1，并从主板 DCOUT1/2 的 VCCBAT/GND 给 SimpleFOC Mini 的 VM/GND 供电，使两板天然共地。Mini 的 VM 推荐不低于 8V，不能用主板 VCC5V 给 VM 供电。若主控和驱动分开供电，仍必须连接两者 GND。
 
-相对旧 FOC 配置，EN 保留 P33.5；三相 PWM 从 P22.0/.2/.1 移到 P00.1/.3/.5；nFAULT 从 P21.0 移到 P15.4；增加 nSLEEP/nRESET。旧线不能直接沿用。
+三相 PWM 现统一从有刷电机接口 2 的 P7 引出。P7-4、P7-3 是 GND，P7-5/P02.7 本程序不使用。P02.4 和 P02.5 同时也出现在 P18-1、P18-5，必须保持这两个 P18 针脚悬空；P18 仅连接本表指定的 nSLEEP、nRESET 和 GND。旧 PWM 线不能继续接 P3。
 
 TC264 核心板使用其规定的独立稳压电源，与 Mini 共地；不要将 STM32 裸芯片的“接 3.3V”要求机械套用到整块 TC264 核心板。H1-2 不给主控供电。P15.4 是 MP/VEXT 输入，本固件将它设为无 MCU 内部上拉的 TTL 滞回输入，使用 Mini 原有的 3.3V 上拉。按 TC26x 数据手册 TTL 滞回输入公式，在 VEXT 不高于 5.5V 时保证 VIH 最大为 2.03V，因此 3.3V 高电平满足规格；不要擅自把 nFAULT 上拉到另一电源导致反向供电。仍应按实际核心板 I/O 电源核对 PWM、EN、RESET、SLEEP 输出电平。
 
@@ -49,9 +49,9 @@ DRV8313 数据手册说明 ENx 内部有下拉，原图没有单独的外部 EN 
 
 ## PWM 与控制顺序
 
-三路 PWM 使用 CCU61 T12 的一个共享上/下计数器，中心对齐，目标 20kHz。程序从 `IfxScuCcu_getSpbFrequency()` 获取外设时钟，选择分频并计算 `T12PR = round(f_timer / (2 * 20000)) - 1`；实际配置频率由 `STATUS` 的 `PWM_HZ` 报告。只有 CC60/61/62 输出启用，COUT 互补输出和死区关闭，DRV8313 自行完成半桥驱动。
+三路 PWM 使用 GTM ATOM0：CH3 是共用的 20kHz 周期/触发通道，CH4、CH5、CH6 分别输出 A、B、C。GTM CLK0 配置为 20MHz，周期约 1000 tick；实际频率由 `STATUS` 的 `PWM_HZ` 报告。每路在一个共同周期内把高脉冲放在中央，因此三相保持同步的中心脉冲对齐；DRV8313 自行完成半桥驱动，不使用互补输出或死区。
 
-更新先取消旧影子传输请求，写完 CC60SR/CC61SR/CC62SR，再发一次 T12 影子传输请求；三相在同一个 PWM 边界生效。`MODCTR=0x15` 仅打开三路 CC 输出。
+更新占空比时先关闭 CH3～CH6 的影子传输，分别写入三路 SR0/SR1，再一次性重新允许更新；三组比较值在下一个 CH3 周期边界同步生效。启动时通过 ATOM0 AGC 同时装载、清零并开启三个输出。
 
 控制使用 CCU60_CH0 PIT，约每 100 μs 更新：
 
@@ -70,7 +70,7 @@ C = 0.5 + 0.5*m*sin(theta_e + 2*pi/3)
 4. 再等待 1 ms 确保 PWM/影子值稳定；复核 nFAULT 电平及 ERU 挂起事件，才使 EN=1。
 5. 固定电角度、低幅定位 200 ms，然后同时缓慢增加电频率和幅值。
 
-STOP 首先 EN=0，随后关闭 CCU61 PWM 调制/计数器，并拉低 nRESET/nSLEEP。仅清零占空比不能代表高阻：EN=1、IN=0 会使 DRV 下管导通。
+STOP 首先 EN=0，随后同步关闭 ATOM0 三路 PWM 输出和共用计数器，并拉低 nRESET/nSLEEP。仅清零占空比不能代表高阻：EN=1、IN=0 会使 DRV 下管导通。
 
 本芯片没有 STM32 TIM1/BKIN。本版把低有效 nFAULT 接到 ERU0 的下降沿中断，优先级 255；ISR 第一项清 EN，然后锁存故障、关闭 PWM。运行期间控制中断还检查 nFAULT 电平。**本版没有使用 CCU6 CTRAP 硬件关 PWM，也没有 nFAULT 硬件门直接清 EN；关断依赖固件响应，延迟需要实测。**短临界区保护启停/三相提交，三角函数计算允许故障中断抢占。
 
@@ -138,7 +138,7 @@ python .\tests\run_host_tests.py
 
 1. **拆桨**并固定电机。先断开电机三相，9V 台式限流电源给 Mini 供电；主控独立供电并共地。初始电流限制可从约 0.3A 起步，按温升/母线情况调整；不要为了克服堵转直接加大幅值/电流。DRV8313 推荐 VM 最低 8V，直接 2S 电池不能保证全程满足。台式电源限流不能当成相电流闭环保护。
 2. 不发 START，测上电、复位、下载期间的 DRV 侧 EN 波形，应保持安全低电平；核对 MCU 复位期间硬件默认状态。确认 nRESET/nSLEEP 和 nFAULT 实测电平符合主控/DRV 阈值。
-3. 断开电机时发送 `AMP 0.03`、`FREQ 2`、`START`。示波器看三路 PWM：约 20kHz，同步中心对齐；EN 应在唤醒和 PWM 等待结束后才高，先固定角度定位、再慢变。发送 STOP，确认 EN 先低，再停 PWM；不能仅看 IN 都为低。
+3. 断开电机时发送 `AMP 0.03`、`FREQ 2`、`START`。示波器看 P7-2/P7-6/P7-1 三路 PWM：约 20kHz，同步且高脉冲居中；EN 应在唤醒和 PWM 等待结束后才高，先固定角度定位、再慢变。发送 STOP，确认 EN 先低，再停 PWM；不能仅看 IN 都为低。
 4. PWM/STOP 正常后接三相，仍拆桨、9V 限流，用上述低幅参数 START；观察起转、声音、母线和温升。只在确认同步跟随后小步调整 FREQ/AMP。只抖动或堵转时立即 STOP；开环无法判断失步，不能保证所有 1104 电机都能以同一组参数起转。
 5. 用合适的开漏晶体管或受控接地测试 nFAULT（不要向其强灌高电平）：运行中将 H1-10 拉低，测 nFAULT→EN 关断延迟、EN 先低、PWM 停止，STATUS=FAULT。此测试验证输入停机链路，不等同于验证 DRV 内部过流/过温机制。
 6. 恢复 nFAULT 高，不发指令，确认不会自启；直接 START 应拒绝。发 CLEAR_FAULT，确认等待结束后 STOPPED 且 EN=0，只有新的 START 才允许启动。nFAULT 仍低时 CLEAR_FAULT 必须仍停在 FAULT；STOP 也不能清锁存。

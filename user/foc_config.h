@@ -21,17 +21,17 @@
 #define FOC_DUTY_MAX                (0.95f)
 
 /* TC264 pin tokens are expanded only by the target port, not by host tests.
- * CCU61 T12 is exclusively reserved for all three PWM inputs; CCU60_CH0
- * remains the 100 us control PIT. Do not call motor_init() in this program:
- * its old ATOM2 output P33.6 conflicts with the new nSLEEP connection.
+ * ATOM0 CH3 is the common time base; CH4/5/6 drive the three PWM inputs on
+ * V3.1 mainboard brushed-motor header 2 (P7). CCU60_CH0 remains the 100 us
+ * control PIT. Do not call motor_init() in this program: the old motor setup
+ * would reconfigure pins which are reserved by this FOC port.
  */
-#define FOC_PWM_MODULE              (&MODULE_CCU61)
-#define FOC_PWM_A_PIN               P00_1
-#define FOC_PWM_B_PIN               P00_3
-#define FOC_PWM_C_PIN               P00_5
-#define FOC_PWM_A_OUTPUT            (&IfxCcu61_CC60_P00_1_OUT)
-#define FOC_PWM_B_OUTPUT            (&IfxCcu61_CC61_P00_3_OUT)
-#define FOC_PWM_C_OUTPUT            (&IfxCcu61_CC62_P00_5_OUT)
+#define FOC_PWM_A_PIN               P02_4
+#define FOC_PWM_B_PIN               P02_5
+#define FOC_PWM_C_PIN               P02_6
+#define FOC_PWM_A_OUTPUT            (&IfxGtm_ATOM0_4_TOUT4_P02_4_OUT)
+#define FOC_PWM_B_OUTPUT            (&IfxGtm_ATOM0_5_TOUT5_P02_5_OUT)
+#define FOC_PWM_C_OUTPUT            (&IfxGtm_ATOM0_6_TOUT6_P02_6_OUT)
 #define FOC_EN_PIN                  P33_5
 #define FOC_NSLEEP_PIN              P33_6
 #define FOC_NRESET_PIN              P33_7

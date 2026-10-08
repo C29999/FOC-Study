@@ -1,11 +1,13 @@
 /* DRV8313 3PWM port for the existing Seekfree TC264 / Infineon iLLD project.
- * CCU61 T12 has ONE shared up/down counter for CC60, CC61 and CC62.
- * Only CC outputs are routed. COUT complementary outputs and dead time are
- * disabled: the DRV8313 performs the half-bridge gate control itself.
+ * ATOM0 CH3 is the common period/trigger channel. CH4, CH5 and CH6 generate
+ * centered pulses on V3.1 mainboard brushed-motor header 2 (P7). All three
+ * shadow pairs are enabled together at the common period boundary.
  */
 #include "foc_port.h"
 #include "foc_config.h"
-#include "IfxCcu6.h"
+#include "Gtm/Atom/Timer/IfxGtm_Atom_Timer.h"
+#include "Gtm/Std/IfxGtm_Cmu.h"
+#include "Gtm/Std/IfxGtm.h"
 #include "IfxCpu.h"
 #include "zf_driver_gpio.h"
 #include "zf_driver_exti.h"
@@ -13,8 +15,17 @@
 static volatile bool port_ready;
 static volatile bool pwm_running;
 static volatile bool driver_awake;
-static uint32 half_period_ticks;
+static IfxGtm_Atom_Timer pwm_timer;
+static uint32 period_ticks;
 static float pwm_frequency_hz;
+
+#define FOC_ATOM_CLOCK_HZ          (20000000.0f)
+#define FOC_ATOM_TIMER_CHANNEL     IfxGtm_Atom_Ch_3
+#define FOC_ATOM_PWM_A_CHANNEL     IfxGtm_Atom_Ch_4
+#define FOC_ATOM_PWM_B_CHANNEL     IfxGtm_Atom_Ch_5
+#define FOC_ATOM_PWM_C_CHANNEL     IfxGtm_Atom_Ch_6
+#define FOC_ATOM_PWM_MASK          ((uint16)((1u << 4) | (1u << 5) | (1u << 6)))
+#define FOC_ATOM_ALL_MASK          ((uint16)((1u << 3) | FOC_ATOM_PWM_MASK))
 
 /* Preload the low output latch before switching an input to output mode.
  * This controls the pin only after firmware runs; it does not establish an
@@ -55,11 +66,9 @@ void foc_port_exit_critical(unsigned int state)
 
 bool foc_port_init(void)
 {
-    Ifx_CCU6 *ccu6 = FOC_PWM_MODULE;
-    float timer_clock_hz;
-    uint32 prescaler;
-    uint32 half_ticks;
-    IfxCcu6_T12Channel channel;
+    IfxGtm_Atom_Timer_Config timer_config;
+    Ifx_GTM_ATOM *atom;
+    Ifx_GTM_ATOM_AGC *agc;
 
     /* EN is the first hardware pin configured by this port. */
     output_init_low(FOC_EN_PIN);
@@ -89,85 +98,68 @@ bool foc_port_init(void)
     IfxPort_setPinPadDriver(get_port(FOC_NFAULT_PIN),
         (uint8)((unsigned int)FOC_NFAULT_PIN & 31u), IfxPort_PadDriver_ttlSpeed2);
 
-    IfxCcu6_enableModule(ccu6);
-    IfxCcu6_stopTimer(ccu6, TRUE, TRUE);
-    ccu6->MODCTR.U = 0u;
-    ccu6->IEN.U = 0u;              /* PWM timer itself has no CPU interrupts. */
-    ccu6->ISR.U = 0xFFFFu;
-    ccu6->TCTR2.U = 0u;            /* No external/automatic timer restart. */
-    ccu6->T12MSEL.U = 0u;
-    ccu6->T12DTC.U = 0u;
-    ccu6->TRPCTR.U = 0u;           /* nFAULT is wired to ERU, not CTRAP. */
-    IfxCcu6_enableTimer(ccu6, IfxCcu6_TimerId_t12);
-    IfxCcu6_disableTimer(ccu6, IfxCcu6_TimerId_t13);
-    IfxCcu6_setCountingInputMode(ccu6, IfxCcu6_TimerId_t12,
-        IfxCcu6_CountingInputMode_internal);
-    IfxCcu6_disableSingleShotMode(ccu6, IfxCcu6_TimerId_t12);
+    IfxGtm_enable(&MODULE_GTM);
+    if ((MODULE_GTM.CMU.CLK_EN.U & 0x2u) == 0u)
+    {
+        IfxGtm_Cmu_setClkFrequency(&MODULE_GTM, IfxGtm_Cmu_Clk_0,
+            FOC_ATOM_CLOCK_HZ);
+        IfxGtm_Cmu_enableClocks(&MODULE_GTM, IFXGTM_CMU_CLKEN_CLK0);
+    }
 
-    /* iLLD IfxCcu6_setT12Frequency() uses the SPB peripheral clock as fCC6.
-     * Calculate from that actual clock, not from the 200 MHz CPU clock.
-     * Full center-aligned period = 2 * (T12PR + 1) timer ticks.
+    IfxGtm_Atom_Timer_initConfig(&timer_config, &MODULE_GTM);
+    timer_config.atom = IfxGtm_Atom_0;
+    timer_config.timerChannel = FOC_ATOM_TIMER_CHANNEL;
+    timer_config.clock = IfxGtm_Cmu_Clk_0;
+    timer_config.base.frequency = (float32)FOC_PWM_FREQUENCY_HZ;
+    timer_config.base.isrPriority = 0u;
+    timer_config.base.trigger.enabled = FALSE;
+    timer_config.initPins = FALSE;
+    if (!IfxGtm_Atom_Timer_init(&pwm_timer, &timer_config))
+    {
+        return false;
+    }
+
+    atom = pwm_timer.atom;
+    agc = pwm_timer.agc;
+    period_ticks = (uint32)IfxGtm_Atom_Timer_getPeriod(&pwm_timer);
+    pwm_frequency_hz = IfxGtm_Atom_Timer_getFrequency(&pwm_timer);
+    if (period_ticks < 10u || !(pwm_frequency_hz > 0.0f))
+    {
+        return false;
+    }
+
+    /* SL=low makes CM1 the rising edge and CM0 the falling edge. Writing
+     * CM1=(period-on)/2 and CM0=(period+on)/2 centers every high pulse.
+     * All phase counters reset from CH3's common output trigger.
      */
-    timer_clock_hz = IfxScuCcu_getSpbFrequency();
-    if (!(timer_clock_hz > 0.0f && timer_clock_hz <= 300000000.0f))
-    {
-        return false;
-    }
-
-    half_ticks = 0u;
-    for (prescaler = 0u; prescaler < 16u; ++prescaler)
-    {
-        half_ticks = (uint32)(timer_clock_hz /
-            (2.0f * (float)FOC_PWM_FREQUENCY_HZ) + 0.5f);
-        if (half_ticks >= 2u && half_ticks <= 65536u)
-        {
-            break;
-        }
-        timer_clock_hz *= 0.5f;
-    }
-    if (prescaler >= 16u)
-    {
-        return false;
-    }
-    IfxCcu6_setInputClockFrequency(ccu6, IfxCcu6_TimerId_t12,
-        (IfxCcu6_TimerInputClock)(prescaler & 7u));
-    if (prescaler >= 8u)
-    {
-        IfxCcu6_enableAdditionalPrescaler(ccu6, IfxCcu6_TimerId_t12);
-    }
-    else
-    {
-        IfxCcu6_disableAdditionalPrescaler(ccu6, IfxCcu6_TimerId_t12);
-    }
-    half_period_ticks = half_ticks;
-    pwm_frequency_hz = timer_clock_hz / (2.0f * (float)half_ticks);
-    IfxCcu6_setT12CountMode(ccu6, IfxCcu6_T12CountMode_centerAligned);
-    IfxCcu6_setT12PeriodValue(ccu6, (uint16)(half_ticks - 1u));
-    IfxCcu6_clearCounter(ccu6, TRUE, FALSE);
-
-    for (channel = IfxCcu6_T12Channel_0; channel <= IfxCcu6_T12Channel_2;
-        channel = (IfxCcu6_T12Channel)((unsigned int)channel + 1u))
-    {
-        IfxCcu6_setT12ChannelMode(ccu6, channel, IfxCcu6_T12ChannelMode_compareMode);
-        IfxCcu6_disableDeadTime(ccu6, channel);
-        IfxCcu6_setT12CaptureCompareState(ccu6, channel, IfxCcu6_CaptureCompareState_clear);
-        IfxCcu6_setOutputPassiveState(ccu6, (IfxCcu6_ChannelOut)(2u * channel), FALSE);
-        IfxCcu6_setOutputPassiveLevel(ccu6, (IfxCcu6_ChannelOut)(2u * channel), FALSE);
-    }
-
-    IfxCcu6_initCc60OutPin(FOC_PWM_A_OUTPUT, IfxPort_OutputMode_pushPull,
+    IfxGtm_Atom_Ch_configurePwmMode(atom, FOC_ATOM_PWM_A_CHANNEL,
+        IfxGtm_Cmu_Clk_0, Ifx_ActiveState_low,
+        IfxGtm_Atom_Ch_ResetEvent_onTrigger, IfxGtm_Atom_Ch_OutputTrigger_forward);
+    IfxGtm_Atom_Ch_configurePwmMode(atom, FOC_ATOM_PWM_B_CHANNEL,
+        IfxGtm_Cmu_Clk_0, Ifx_ActiveState_low,
+        IfxGtm_Atom_Ch_ResetEvent_onTrigger, IfxGtm_Atom_Ch_OutputTrigger_forward);
+    IfxGtm_Atom_Ch_configurePwmMode(atom, FOC_ATOM_PWM_C_CHANNEL,
+        IfxGtm_Cmu_Clk_0, Ifx_ActiveState_low,
+        IfxGtm_Atom_Ch_ResetEvent_onTrigger, IfxGtm_Atom_Ch_OutputTrigger_forward);
+    IfxGtm_PinMap_setAtomTout(FOC_PWM_A_OUTPUT, IfxPort_OutputMode_pushPull,
         IfxPort_PadDriver_cmosAutomotiveSpeed1);
-    IfxCcu6_initCc61OutPin(FOC_PWM_B_OUTPUT, IfxPort_OutputMode_pushPull,
+    IfxGtm_PinMap_setAtomTout(FOC_PWM_B_OUTPUT, IfxPort_OutputMode_pushPull,
         IfxPort_PadDriver_cmosAutomotiveSpeed1);
-    IfxCcu6_initCc62OutPin(FOC_PWM_C_OUTPUT, IfxPort_OutputMode_pushPull,
+    IfxGtm_PinMap_setAtomTout(FOC_PWM_C_OUTPUT, IfxPort_OutputMode_pushPull,
         IfxPort_PadDriver_cmosAutomotiveSpeed1);
+
+    IfxGtm_Atom_Timer_addToChannelMask(&pwm_timer, FOC_ATOM_PWM_A_CHANNEL);
+    IfxGtm_Atom_Timer_addToChannelMask(&pwm_timer, FOC_ATOM_PWM_B_CHANNEL);
+    IfxGtm_Atom_Timer_addToChannelMask(&pwm_timer, FOC_ATOM_PWM_C_CHANNEL);
+    IfxGtm_Atom_Agc_enableChannelsOutput(agc, 0u, FOC_ATOM_PWM_MASK, TRUE);
+    IfxGtm_Atom_Agc_enableChannels(agc, 0u, FOC_ATOM_ALL_MASK, TRUE);
 
     port_ready = true;
     foc_port_update_duties(0.5f, 0.5f, 0.5f);
     return true;
 }
 
-static uint16 duty_to_compare(float duty)
+static uint32 duty_to_on_ticks(float duty)
 {
     /* Includes NaN rejection before the float-to-integer conversion. */
     if (!(duty >= FOC_DUTY_MIN))
@@ -179,58 +171,54 @@ static uint16 duty_to_compare(float duty)
         duty = FOC_DUTY_MAX;
     }
 
-    /* For active-high CC6xST center PWM: compare = (period - onTime) / 2.
-     * See the timing example in iLLD IfxCcu6_PwmHl_setOnTime().
-     */
-    return (uint16)((1.0f - duty) * (float)half_period_ticks + 0.5f);
+    return (uint32)(duty * (float)period_ticks + 0.5f);
 }
 
 void foc_port_update_duties(float duty_a, float duty_b, float duty_c)
 {
-    Ifx_CCU6 *ccu6 = FOC_PWM_MODULE;
-    uint16 compare_a;
-    uint16 compare_b;
-    uint16 compare_c;
+    Ifx_GTM_ATOM *atom = pwm_timer.atom;
+    uint32 on_a;
+    uint32 on_b;
+    uint32 on_c;
     if (!port_ready)
     {
         return;
     }
-    compare_a = duty_to_compare(duty_a);
-    compare_b = duty_to_compare(duty_b);
-    compare_c = duty_to_compare(duty_c);
+    on_a = duty_to_on_ticks(duty_a);
+    on_b = duty_to_on_ticks(duty_b);
+    on_c = duty_to_on_ticks(duty_c);
 
-    /* Cancel a previous transfer request BEFORE writing any new shadow.
-     * This prevents a PWM boundary during these writes transferring a mix
-     * of old/new phases. One request transfers all CC6xSR synchronously at
-     * the next T12 shadow-transfer boundary. No live compare writes occur.
+    /* Disable ATOM shadow updates before writing any phase. This prevents a
+     * period boundary during these writes from transferring a mixed set.
+     * Re-enabling the common mask transfers all three pairs together at the
+     * next CH3 period boundary. No live compare registers are written.
      */
-    IfxCcu6_disableShadowTransfer(ccu6, TRUE, FALSE);
-    ccu6->CC60SR.U = compare_a;
-    ccu6->CC61SR.U = compare_b;
-    ccu6->CC62SR.U = compare_c;
-    IfxCcu6_enableShadowTransfer(ccu6, TRUE, FALSE);
+    IfxGtm_Atom_Timer_disableUpdate(&pwm_timer);
+    IfxGtm_Atom_Ch_setCompareShadow(atom, FOC_ATOM_PWM_A_CHANNEL,
+        (period_ticks + on_a) / 2u, (period_ticks - on_a) / 2u);
+    IfxGtm_Atom_Ch_setCompareShadow(atom, FOC_ATOM_PWM_B_CHANNEL,
+        (period_ticks + on_b) / 2u, (period_ticks - on_b) / 2u);
+    IfxGtm_Atom_Ch_setCompareShadow(atom, FOC_ATOM_PWM_C_CHANNEL,
+        (period_ticks + on_c) / 2u, (period_ticks - on_c) / 2u);
+    IfxGtm_Atom_Timer_applyUpdate(&pwm_timer);
 }
 
 void foc_port_start_pwm(void)
 {
-    Ifx_CCU6 *ccu6 = FOC_PWM_MODULE;
+    Ifx_GTM_ATOM_AGC *agc = pwm_timer.agc;
     foc_port_disable_driver_immediate();
     if (!port_ready || !driver_awake || foc_port_fault_active())
     {
         return;
     }
-    IfxCcu6_stopTimer(ccu6, TRUE, FALSE);
-    IfxCcu6_clearCounter(ccu6, TRUE, FALSE);
-    IfxCcu6_setT12CaptureCompareState(ccu6, IfxCcu6_T12Channel_0,
-        IfxCcu6_CaptureCompareState_clear);
-    IfxCcu6_setT12CaptureCompareState(ccu6, IfxCcu6_T12Channel_1,
-        IfxCcu6_CaptureCompareState_clear);
-    IfxCcu6_setT12CaptureCompareState(ccu6, IfxCcu6_T12Channel_2,
-        IfxCcu6_CaptureCompareState_clear);
     foc_port_update_duties(0.5f, 0.5f, 0.5f);
-    /* Enable CC60/CC61/CC62 only. Bits 1/3/5 (COUT) remain disabled. */
-    ccu6->MODCTR.U = 0x15u;
-    IfxCcu6_startTimer(ccu6, TRUE, FALSE);
+    /* Load every shadow and reset every counter before enabling outputs. */
+    IfxGtm_Atom_Agc_setChannelsForceUpdate(agc, FOC_ATOM_ALL_MASK, 0u,
+        FOC_ATOM_ALL_MASK, 0u);
+    IfxGtm_Atom_Agc_enableChannels(agc, FOC_ATOM_ALL_MASK, 0u, FALSE);
+    IfxGtm_Atom_Agc_enableChannelsOutput(agc, FOC_ATOM_PWM_MASK, 0u, FALSE);
+    IfxGtm_Atom_Agc_trigger(agc);
+    IfxGtm_Atom_Agc_setChannelsForceUpdate(agc, 0u, FOC_ATOM_ALL_MASK, 0u, 0u);
     pwm_running = true;
     /* Caller waits FOC_PWM_SETTLE_MS before enabling the driver, allowing
      * period and all initial shadows to transfer while EN remains low.
@@ -262,13 +250,13 @@ bool foc_port_enable_driver(void)
 
 void foc_port_disable(void)
 {
-    Ifx_CCU6 *ccu6 = FOC_PWM_MODULE;
+    Ifx_GTM_ATOM_AGC *agc = pwm_timer.agc;
     foc_port_disable_driver_immediate();
     if (port_ready)
     {
-        ccu6->MODCTR.U = 0u;
-        IfxCcu6_stopTimer(ccu6, TRUE, FALSE);
-        IfxCcu6_disableShadowTransfer(ccu6, TRUE, FALSE);
+        IfxGtm_Atom_Agc_enableChannelsOutput(agc, 0u, FOC_ATOM_PWM_MASK, TRUE);
+        IfxGtm_Atom_Agc_enableChannels(agc, 0u, FOC_ATOM_ALL_MASK, TRUE);
+        IfxGtm_Atom_Timer_disableUpdate(&pwm_timer);
     }
     pwm_running = false;
     /* Disabling PWM alone is not high impedance: EN=1 with IN=0 turns on
